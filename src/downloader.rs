@@ -7,7 +7,6 @@ use std::io::Write;
 use std::process::Command;
 use std::env;
 use std::process::Stdio;
-use std::result;
 use std::sync::Arc;
 
 use indicatif::MultiProgress;
@@ -84,7 +83,6 @@ async fn download_file(client: &Client, download_name : Option<&str>, url : &str
 
 // TODO : add validation for keys
 // TODO : add retries for downloads
-// TODO : minimize dependencies
 // TODO : automatically find the version to download for isos (https://www.reddit.com/r/archlinux/comments/qd1ppx/is_there_a_fixed_link_that_always_points_to_the/)
 
 pub async fn download_mido_script(client: &Client, is_debug : bool) -> PathBuf {
@@ -135,7 +133,7 @@ pub async fn download_isos(args : Args){
         let downloads_iter = stream::iter(temp_downloads).map(|index_and_download| {
             let cloned_client = client.clone();
             let multi_progress = Arc::clone(&multi_progress);
-            let index = index_and_download.0;
+            //let index = index_and_download.0;
             let download = index_and_download.1;
             let download_name = Arc::new(download.0.to_owned());
             let download_url = Arc::new(download.1.as_str().expect("Urls of downloads should be strings").to_owned());
