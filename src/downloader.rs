@@ -6,19 +6,27 @@ use std::cmp::min;
 use std::io::Write;
 use std::process::Command;
 use std::env;
+use std::process::Stdio;
+use std::result;
+use std::sync::Arc;
 
+use indicatif::MultiProgress;
 use reqwest::Client;
 use indicatif::{ProgressBar, ProgressStyle};
 use toml::{Table, map};
 use url::Url;
-use futures_util::StreamExt;
+use futures_util::{stream, StreamExt};
 
+use crate::args::Args;
 use crate::debug::print_debug;
 
-async fn download_file_in_path(client: &Client, download_name : Option<&str>, url : &str, out_path : &Path) -> Result<(), String> {
+async fn download_file_in_path(client: &Client, download_name : Option<&str>, url : &str, out_path : &Path, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
     let resp = client.get(url).send().await.or(Err(format!("Failed to GET from '{}'", &url)))?;
     let total_size = resp.content_length().ok_or(format!("Failed to get content length from '{}'", &url))?;
-    let pb = ProgressBar::new(total_size);
+    let pb = match multi_progress {
+        Some(mpb) => mpb.add(ProgressBar::new(total_size)),
+        None => ProgressBar::new(total_size)
+    };
     pb.set_style(ProgressStyle::default_bar()
         .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})").unwrap()
         .progress_chars("#>-"));
@@ -45,11 +53,6 @@ async fn download_file_in_path(client: &Client, download_name : Option<&str>, ur
     pb.finish_with_message(format!("Downloaded {} to {}", url, out_path_str));
     Ok(())
 
-    
-    /*let resp = reqwest::blocking::get(url).expect("request failed");
-    let body = resp.text().expect("body invalid");
-    let mut out = File::create(out_path).expect("failed to create file");
-    io::copy(&mut body.as_bytes(), &mut out).expect("Failed to copy content");*/
 }
 
 fn get_last_item_iter<I : IntoIterator, F : FnMut(&I::Item) -> bool,>(iter : I, mut f : F) -> Option<I::Item> {
@@ -65,7 +68,7 @@ fn get_last_item_iter<I : IntoIterator, F : FnMut(&I::Item) -> bool,>(iter : I, 
     last
 }
 
-async fn download_file(client: &Client, download_name : Option<&str>, url : &str, dir : &Path, is_debug : bool) -> Result<(), String> {
+async fn download_file(client: &Client, download_name : Option<&str>, url : &str, dir : &Path, is_debug : bool, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
     let parsed_url = Url::parse(url).expect("Invalid url");
     let url_segments = parsed_url.path_segments().unwrap();
     let url_filename = get_last_item_iter(url_segments, |&item| {
@@ -75,18 +78,20 @@ async fn download_file(client: &Client, download_name : Option<&str>, url : &str
     out_path.push(dir);
     out_path.push(Path::new(url_filename));
     print_debug!(is_debug, "out_path : {}", out_path.to_str().unwrap());
-    download_file_in_path(client, download_name, url, out_path.deref()).await
+    download_file_in_path(client, download_name, url, out_path.deref(), multi_progress).await
 }
 
 
 // TODO : add validation for keys
-// TODO : add parallel download
+// TODO : add retries for downloads
+// TODO : minimize dependencies
+// TODO : automatically find the version to download for isos (https://www.reddit.com/r/archlinux/comments/qd1ppx/is_there_a_fixed_link_that_always_points_to_the/)
 
-pub async fn download_mido_script(client: &Client, is_debug : bool) -> PathBuf{
+pub async fn download_mido_script(client: &Client, is_debug : bool) -> PathBuf {
     let mut out_path: PathBuf = env::temp_dir();
     out_path.push("mido.sh");
     let url = "https://raw.githubusercontent.com/ElliotKillick/Mido/main/Mido.sh";
-    download_file_in_path(client, None, url, out_path.deref()).await.expect("Couldn't find the mido script");
+    download_file_in_path(client, None, url, out_path.deref(), None).await.expect("Couldn't find the mido script");
     if cfg!(unix){
         print_debug!(is_debug, "out_path : {}", out_path.to_str().unwrap());
         Command::new("chmod").arg("+x").arg(out_path.to_str().unwrap()).output().expect("failed to execute chmod +x on the mido script");
@@ -94,33 +99,83 @@ pub async fn download_mido_script(client: &Client, is_debug : bool) -> PathBuf{
     out_path
 }
 
-async fn download_windows_isos(client: &Client, windows_isos : &map::Map<String, toml::Value>, is_debug : bool){
+async fn download_windows_isos(client: &Client, windows_isos : &map::Map<String, toml::Value>, is_debug : bool, download_dir : &PathBuf){
     let script_path = download_mido_script(client, is_debug).await;
     let windows_versions_vals = windows_isos["windows_versions"].as_array().expect("Windows versions should be an array");
     let windows_versions = windows_versions_vals.into_iter().map(|version| version.as_str().expect("Windows versions should be strings")).collect::<Vec<&str>>();
-    Command::new(script_path).args(windows_versions).output().expect("failed to execute the mido script");
+    Command::new(script_path).args(windows_versions).current_dir(download_dir.canonicalize().unwrap()).stderr(Stdio::inherit()).spawn().expect("failed to execute the mido script");
     /*for version in windows_versions {
         let version_str = version.as_str().expect("Windows versions should be strings");
     }*/
 }
 
-pub async fn download_isos(config_file : String, download_dir : &Path, is_debug : bool){
-    print_debug!(is_debug, "config_file : {}", config_file);
-    let file_content = read_to_string(config_file).expect("Config file not found");
+
+pub async fn download_isos(args : Args){
+    print_debug!(args.is_debug, "config_file : {}", args.config_file);
+    let file_content = read_to_string(args.config_file).expect("Config file not found");
     let table = file_content.parse::<Table>().unwrap();
-    print_debug!(is_debug, "{}", table);
+    print_debug!(args.is_debug, "{}", table);
+    
     let client = reqwest::Client::new();
-    let downloads = table["downloads"].as_table().expect("The downloads table is missing");
-    for download in downloads {
-        //println!("downloading {}...", download.0);
-        let download_url : &str = download.1.as_str().expect("Urls of downloads should be strings");
-        //let download_url = download.1.as_str().expect("Urls of downloads should be strings");
-        download_file(&client, Some(download.0.as_str()), download_url, download_dir, is_debug).await.expect("Couldn't download file");
+    
+    if !args.only_download_windows {
+        let downloads = table["downloads"].as_table().expect("The downloads table is missing");
+        if args.concurrent_request == 1 {
+            for download in downloads {
+                //println!("downloading {}...", download.0);
+                let download_url = download.1.as_str().expect("Urls of downloads should be strings");
+                let download_name = download.0;
+                download_file(&client, Some(download_name), download_url, &args.download_dir , args.is_debug, None).await.expect("Couldn't download file");
+            }
+        } else {
+        
+        
+        let temp_downloads = downloads.iter().enumerate();
+        let multi_progress = Arc::new(MultiProgress::new());
+        let downloads_iter = stream::iter(temp_downloads).map(|index_and_download| {
+            let cloned_client = client.clone();
+            let multi_progress = Arc::clone(&multi_progress);
+            let index = index_and_download.0;
+            let download = index_and_download.1;
+            let download_name = Arc::new(download.0.to_owned());
+            let download_url = Arc::new(download.1.as_str().expect("Urls of downloads should be strings").to_owned());
+            let cloned_download_dir = args.download_dir.to_owned();
+            tokio::spawn(async move {
+                let client = &cloned_client;
+                download_file(client, Some((*download_name).as_str()), (*download_url).as_str(), &cloned_download_dir, args.is_debug, Some(&multi_progress)).await.expect("Couldn't download file");
+            })
+        }).buffer_unordered(args.concurrent_request as usize);
+
+        downloads_iter.for_each(|_|{
+            async {
+                () // do nothing
+            }
+        }).await;
+
+        }
+
+        /*for download in downloads {
+            //println!("downloading {}...", download.0);
+            let download_url = Arc::new(download.1.as_str().expect("Urls of downloads should be strings").to_owned());
+            //let download_url : &str = download.1.to_owned().as_str().expect("Urls of downloads should be strings");
+            //let download_url = download.1.as_str().expect("Urls of downloads should be strings");
+            let cloned_client = client.clone();
+            let download_name = Arc::new(download.0.to_owned());
+            // let cloned_download_name = download_name.clone();
+            let cloned_download_dir = args.download_dir.clone();
+            tokio::spawn(async move {
+                download_file(&cloned_client, Some((*cloned_download_name).as_str()), (*download_url).as_str(), &(*cloned_download_dir), args.is_debug).await.expect("Couldn't download file");
+            });
+        }*/
+
     }
-    let windows_isos = table["windows_downloads"].as_table();
-    // TODO
-    /*if windows_isos.is_some(){
-        let windows_isos = windows_isos.unwrap();
-        download_windows_isos(&client, windows_isos, is_debug).await;
-    }*/
+
+    if !args.no_windows {
+        let windows_isos = table["windows_downloads"].as_table();
+        // TODO
+        if windows_isos.is_some(){
+            let windows_isos = windows_isos.unwrap();
+            download_windows_isos(&client, windows_isos, args.is_debug, &args.download_dir).await;
+        }
+    }
 }
