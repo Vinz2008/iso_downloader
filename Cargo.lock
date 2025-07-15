@@ -583,7 +583,6 @@ dependencies = [
  "reqwest",
  "tokio",
  "toml",
- "url",
 ]
 
 [[package]]

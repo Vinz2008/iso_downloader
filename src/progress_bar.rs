@@ -2,6 +2,8 @@ use std::cmp::min;
 
 use indicatif::{MultiProgress,  ProgressStyle};
 
+use crate::downloader::DownloadName;
+
 // TODO : add a struct with all the state
 // TODO : add a label with the total speed ?
 
@@ -13,7 +15,7 @@ pub struct ProgressBar {
 }
 
 impl ProgressBar {
-    pub fn new(multi_progress : Option<&MultiProgress>, url : &str, out_path_str: &str, total_size : u64, download_name : Option<&str>) -> ProgressBar {
+    pub fn new(multi_progress : Option<&MultiProgress>, url : &str, out_path_str: &str, total_size : u64, download_name : DownloadName) -> ProgressBar {
         let pb = match multi_progress {
             Some(mpb) => mpb.add(indicatif::ProgressBar::new(total_size)),
             None => indicatif::ProgressBar::new(total_size)
@@ -23,11 +25,8 @@ impl ProgressBar {
             .progress_chars("#>-"));
 
         // TODO : instead of Option str, use an enum with one Mido, and the other the name
-        let pb_message = if download_name.is_none(){
-            format!("Downloading mido {}...", url)
-        } else {
-            format!("Downloading {} {}...", download_name.unwrap(), url)
-        };
+
+        let pb_message = format!("Downloading {} {}...", download_name.to_string(), url);
 
         pb.set_message(pb_message);
 

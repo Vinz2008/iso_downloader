@@ -10,23 +10,35 @@ use std::sync::Arc;
 use indicatif::MultiProgress;
 use reqwest::Client;
 use toml::{Table, map};
-use url::Url;
 use futures_util::{stream, StreamExt};
 
 use crate::args::Args;
 use crate::debug::print_debug;
 use crate::progress_bar::{ProgressBar};
 
+pub enum DownloadName {
+    Mido,
+    Name(String)
+}
 
+impl ToString for DownloadName {
+    fn to_string(&self) -> String {
+        match self {
+            Self::Mido => "mido".to_owned(),
+            Self::Name(s) => s.clone(),
+        }
+    }
+}
 
 // TODO : better error handling ?
-async fn download_file_in_path(client: &Client, download_name : Option<&str>, url : &str, out_path : &Path, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
+async fn download_file_in_path(client: &Client, download_name : DownloadName, url : &str, out_path : &Path, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
     let resp = client.get(url).send().await.map_err(|e| format!("Failed to GET from '{}, {}'", &url, e))?;
     let total_size = resp.content_length().ok_or_else(|| format!("Failed to get content length from '{}'", &url))?;
     
     let out_path_str = out_path.to_str().expect("The out path is not UTF-8");
     let mut file = File::create(out_path).unwrap_or_else(|e| panic!("Failed to create file '{}', {}", out_path_str, e));
     let mut stream = resp.bytes_stream();
+    
 
     let pb = ProgressBar::new(multi_progress, url, out_path_str, total_size, download_name);
 
@@ -43,10 +55,8 @@ async fn download_file_in_path(client: &Client, download_name : Option<&str>, ur
 }
 
 
-async fn download_file(client: &Client, download_name : Option<&str>, url : &str, dir : &Path, is_debug : bool, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
-    // TODO : create url parser and replace this
-    let parsed_url = Url::parse(url).expect("Invalid url");
-    let url_segments = parsed_url.path_segments().unwrap();
+async fn download_file(client: &Client, download_name : DownloadName, url : &str, dir : &Path, is_debug : bool, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
+    let url_segments = url.split('/');
 
     // use next_back instead of last to not needlessly iterate
     let mut url_filename = url_segments.into_iter().next_back().unwrap();
@@ -80,7 +90,7 @@ pub async fn download_mido_script(client: &Client, is_debug : bool) -> PathBuf {
     let mut out_path: PathBuf = env::temp_dir();
     out_path.push("mido.sh");
     let url = "https://raw.githubusercontent.com/ElliotKillick/Mido/main/Mido.sh";
-    download_file_in_path(client, None, url, out_path.deref(), None).await.expect("Couldn't find the mido script");
+    download_file_in_path(client, DownloadName::Mido, url, out_path.deref(), None).await.expect("Couldn't find the mido script");
     if cfg!(unix){
         print_debug!(is_debug, "out_path : {}", out_path.to_str().unwrap());
         Command::new("chmod").arg("+x").arg(out_path.to_str().unwrap()).output().expect("failed to execute chmod +x on the mido script");
@@ -115,8 +125,8 @@ pub async fn download_isos(args : Args){
         if args.concurrent_request == 1 {
             for download in downloads {
                 let download_url = download.1.as_str().expect("Urls of downloads should be strings");
-                let download_name = download.0;
-                download_file(&client, Some(download_name), download_url, &args.download_dir , args.is_debug, None).await.expect("Couldn't download file");
+                let download_name = DownloadName::Name(download.0.clone());
+                download_file(&client, download_name, download_url, &args.download_dir , args.is_debug, None).await.expect("Couldn't download file");
             }
         } else {
         
@@ -130,7 +140,8 @@ pub async fn download_isos(args : Args){
             let cloned_download_dir = args.download_dir.to_owned();
             tokio::spawn(async move {
                 let client = &cloned_client;
-                download_file(client, Some((*download_name).as_str()), (*download_url).as_str(), &cloned_download_dir, args.is_debug, Some(&multi_progress)).await.expect("Couldn't download file");
+                let download_name = DownloadName::Name(Arc::into_inner(download_name).unwrap());
+                download_file(client, download_name, download_url.as_str(), &cloned_download_dir, args.is_debug, Some(&multi_progress)).await.expect("Couldn't download file");
             })
         }).buffer_unordered(args.concurrent_request as usize);
 
