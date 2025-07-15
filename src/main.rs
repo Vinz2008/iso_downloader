@@ -1,10 +1,9 @@
 mod debug;
-
 mod downloader;
+mod args;
+mod progress_bar;
 
 use downloader::download_isos;
-
-mod args;
 
 use args::parse_args;
 
