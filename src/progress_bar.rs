@@ -4,7 +4,6 @@ use indicatif::{MultiProgress,  ProgressStyle};
 
 use crate::downloader::DownloadName;
 
-// TODO : add a struct with all the state
 // TODO : add a label with the total speed ?
 
 
@@ -48,8 +47,3 @@ impl ProgressBar {
         self.progress_bar.finish_with_message(format!("Downloaded {} to {}", self.url, self.out_path_str));
     }
 }
-
-// TODO : make these member functions
-
-
-
