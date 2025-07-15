@@ -1,5 +1,4 @@
-use std::fs::read_to_string;
-use std::fs::File;
+use std::fs::{read_to_string, File};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::io::Write;
@@ -16,64 +15,60 @@ use futures_util::{stream, StreamExt};
 
 use crate::args::Args;
 use crate::debug::print_debug;
-use crate::progress_bar::{start_progress_bar, handle_progress_bar, finish_progress_bar};
+use crate::progress_bar::{ProgressBar};
 
 
 
 // TODO : better error handling ?
 async fn download_file_in_path(client: &Client, download_name : Option<&str>, url : &str, out_path : &Path, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
-    let resp = client.get(url).send().await.or_else(|e| Err(format!("Failed to GET from '{}, {}'", &url, e)))?;
+    let resp = client.get(url).send().await.map_err(|e| format!("Failed to GET from '{}, {}'", &url, e))?;
     let total_size = resp.content_length().ok_or_else(|| format!("Failed to get content length from '{}'", &url))?;
     
     let out_path_str = out_path.to_str().expect("The out path is not UTF-8");
     let mut file = File::create(out_path).unwrap_or_else(|e| panic!("Failed to create file '{}', {}", out_path_str, e));
-    let mut downloaded_pos_pb: u64 = 0;
     let mut stream = resp.bytes_stream();
 
-    let pb = start_progress_bar(multi_progress, url, total_size, download_name);
+    let pb = ProgressBar::new(multi_progress, url, out_path_str, total_size, download_name);
 
     while let Some(item) = stream.next().await {
-        let chunk = item.or(Err(format!("Error while downloading file")))?;
+        let chunk = item.or(Err("Error while downloading file"))?;
         file.write_all(&chunk)
-            .or(Err(format!("Error while writing to file")))?;
-        handle_progress_bar(&pb, &mut downloaded_pos_pb, chunk.len(), total_size);
+            .or(Err("Error while writing to file".to_owned()))?;
+        pb.update(chunk.len());
     }
 
-    finish_progress_bar(&pb, out_path_str, out_path_str);
+    pb.finish();
     Ok(())
 
 }
 
 
-/*fn get_last_item_iter<I : IntoIterator, F : FnMut(&I::Item) -> bool,>(iter : I, mut f : F) -> Option<I::Item> {
-    let mut last = None;
-    
-    for elem in iter {
-        if f(&elem){
-            return Some(elem);
-        }
-        last = Some(elem);
-    }
-    
-    last
-}*/
-
 async fn download_file(client: &Client, download_name : Option<&str>, url : &str, dir : &Path, is_debug : bool, multi_progress : Option<&MultiProgress>) -> Result<(), String> {
+    // TODO : create url parser and replace this
     let parsed_url = Url::parse(url).expect("Invalid url");
     let url_segments = parsed_url.path_segments().unwrap();
-    /*let url_filename = get_last_item_iter(url_segments, |&item| {
-        item.ends_with(".iso")
-    }).unwrap();*/
 
-    let url_filename = url_segments.into_iter().last().unwrap();
-    if !url_filename.ends_with(".iso"){
-        return Err("The file that is tried to be download is not an iso".to_owned());
+    // use next_back instead of last to not needlessly iterate
+    let mut url_filename = url_segments.into_iter().next_back().unwrap();
+    
+    if url_filename.contains("?"){
+        url_filename = url_filename.split_once("?").unwrap().0;
     }
+
+    if !url_filename.ends_with(".iso"){
+        return Err(format!("The file {} that is tried to be download is not an iso", url_filename));
+    }
+
     let mut out_path = PathBuf::new();
     out_path.push(dir);
     out_path.push(Path::new(url_filename));
     print_debug!(is_debug, "out_path : {}", out_path.to_str().unwrap());
-    download_file_in_path(client, download_name, url, out_path.deref(), multi_progress).await
+    if !out_path.exists(){
+        download_file_in_path(client, download_name, url, out_path.deref(), multi_progress).await
+    } else {
+        Ok(())
+    }
+    
 }
 
 
@@ -93,14 +88,16 @@ pub async fn download_mido_script(client: &Client, is_debug : bool) -> PathBuf {
     out_path
 }
 
-async fn download_windows_isos(client: &Client, windows_isos : &map::Map<String, toml::Value>, is_debug : bool, download_dir : &PathBuf){
+async fn download_windows_isos(client: &Client, windows_isos : &map::Map<String, toml::Value>, is_debug : bool, download_dir : &Path){
     let script_path = download_mido_script(client, is_debug).await;
     let windows_versions_vals = windows_isos["windows_versions"].as_array().expect("Windows versions should be an array");
-    let windows_versions = windows_versions_vals.into_iter().map(|version| version.as_str().expect("Windows versions should be strings")).collect::<Vec<&str>>();
-    Command::new(script_path).args(windows_versions).current_dir(download_dir.canonicalize().unwrap()).stderr(Stdio::inherit()).spawn().expect("failed to execute the mido script");
-    /*for version in windows_versions {
-        let version_str = version.as_str().expect("Windows versions should be strings");
-    }*/
+    let windows_versions = windows_versions_vals.iter().map(|version| version.as_str().expect("Windows versions should be strings")).collect::<Vec<&str>>();
+    Command::new(script_path)
+        .args(windows_versions)
+        .current_dir(download_dir.canonicalize().unwrap())
+        .stderr(Stdio::inherit())
+        .spawn().expect("failed to execute the mido script")
+        .wait().unwrap();
 }
 
 
@@ -117,7 +114,6 @@ pub async fn download_isos(args : Args){
         let downloads = table.get("downloads").expect("The downloads table is missing").as_table().expect("The downloads table is not table");
         if args.concurrent_request == 1 {
             for download in downloads {
-                //println!("downloading {}...", download.0);
                 let download_url = download.1.as_str().expect("Urls of downloads should be strings");
                 let download_name = download.0;
                 download_file(&client, Some(download_name), download_url, &args.download_dir , args.is_debug, None).await.expect("Couldn't download file");
@@ -152,8 +148,7 @@ pub async fn download_isos(args : Args){
     if !args.no_windows {
         let windows_isos = table["windows_downloads"].as_table();
         // TODO
-        if windows_isos.is_some(){
-            let windows_isos = windows_isos.unwrap();
+        if let Some(windows_isos) = windows_isos{
             download_windows_isos(&client, windows_isos, args.is_debug, &args.download_dir).await;
         }
     }

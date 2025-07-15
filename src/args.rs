@@ -43,18 +43,17 @@ pub fn parse_args() -> Args {
                     .next()
                     .expect("Download directory path not found after '-D'");
                 download_dir = PathBuf::from(download_dir_temp);
-                //download_dir = Path::new(download_dir_temp.as_str());
             } else {
                 panic!("Unexpected arg : {}", arg)
             }
         }
     }
-    return Args {
-        is_debug: is_debug,
-        only_download_windows: only_download_windows,
-        no_windows: no_windows,
-        concurrent_request: concurrent_request,
+    Args {
+        is_debug,
+        only_download_windows,
+        no_windows,
+        concurrent_request,
         config_file: config_file.expect("config file path not found"),
-        download_dir: download_dir,
-    };
+        download_dir,
+    }
 }
