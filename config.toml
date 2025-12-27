@@ -1,0 +1,17 @@
+[downloads]
+gparted  = "https://altushost-swe.dl.sourceforge.net/project/gparted/gparted-live-stable/1.7.0-12/gparted-live-1.7.0-12-amd64.iso?viasf=1"
+clonezilla = "https://deac-riga.dl.sourceforge.net/project/clonezilla/clonezilla_live_stable/3.3.0-33/clonezilla-live-3.3.0-33-amd64.iso?viasf=1"
+supergrub = "https://deac-riga.dl.sourceforge.net/project/supergrub2/2.06s4/super_grub2_disk_2.06s4/supergrub2-classic-2.06s4-multiarch-CD.iso?viasf=1"
+archlinux = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso"
+manjaro = "https://download.manjaro.org/kde/25.0.10/manjaro-kde-25.0.10-251013-linux612.iso"
+gentoo = "https://gentoo.osuosl.org/releases/amd64/autobuilds/current-install-amd64-minimal/install-amd64-minimal-20251221T154556Z.iso"
+fedora = "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Workstation/x86_64/iso/Fedora-Workstation-Live-43-1.6.x86_64.iso"
+fedora-server = "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/iso/Fedora-Server-dvd-x86_64-43-1.6.iso"
+popos = "https://iso.pop-os.org/24.04/amd64/generic/22/pop-os_24.04_amd64_generic_22.iso"
+ubuntu-desktop = "https://releases.ubuntu.com/noble/ubuntu-24.04.3-desktop-amd64.iso"
+ubuntu-server = "https://releases.ubuntu.com/noble/ubuntu-24.04.3-live-server-amd64.iso"
+zorinos = "https://mirrors.ircam.fr/pub/zorinos-isos/18/Zorin-OS-18-Core-64-bit-r2.iso"
+netboot = "https://boot.netboot.xyz/ipxe/netboot.xyz.iso"
+
+[windows_downloads]
+windows_versions = ["win10x64", "win11x64"]
